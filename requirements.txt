@@ -1,0 +1,4 @@
+```text
+pyTelegramBotAPI
+python-docx
+```
