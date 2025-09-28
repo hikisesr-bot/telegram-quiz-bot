@@ -1,4 +1,2 @@
-```text
 pyTelegramBotAPI
 python-docx
-```
