@@ -1,5 +1,0 @@
-- name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          # OR the specific command if you don't use requirements.txt:
-          # pip install python-telegram-bot python-docx
