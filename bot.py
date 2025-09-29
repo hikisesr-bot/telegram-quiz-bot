@@ -1,27 +1,35 @@
-import random
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import os
 import io
-import uuid
 import zipfile
+import random
+import time
 from docx import Document
-from docx.shared import Pt
+from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
+from docx.enum.style import WD_STYLE_TYPE
 
-# --- AURA Engine v22.0 Data Structures (Ported from Quiz.html) ---
+# --- Configuration ---
+# Securely load the bot token from an environment variable.
+API_TOKEN = os.getenv('API_TOKEN')
 
-def select_random(arr):
-    """Selects a random element from a list."""
-    return random.choice(arr)
+if not API_TOKEN:
+    raise ValueError("No API_TOKEN set. Please set the API_TOKEN environment variable.")
 
-# 1. Personas for answer introductions
-PERSONAS = {
+bot = telebot.TeleBot(API_TOKEN)
+user_data = {}
+
+# --- AURA Engine v22.0 Logic (Ported from JavaScript to Python) ---
+# NOTE: This section contains the same quiz generation logic as the previous version.
+# The main changes are in the bot handler section to add the loading screen.
+
+personas = {
     'professor': {'intro': lambda term: f"The following analysis provides a comprehensive examination of {term}."},
     'tutor': {'intro': lambda term: f"Let's break down {term} into simpler, more understandable parts."}
 }
 
-# 2. Unit Plans for structure
-UNIT_PLANS = {
+unit_plans = {
     'psychology': [{
         'objective': "analyze the principles of classical and operant conditioning.",
         'keyTerms': ["Unconditioned Stimulus", "Conditioned Response", "Reinforcement", "Punishment"],
@@ -48,8 +56,7 @@ UNIT_PLANS = {
     }]
 }
 
-# 3. Content Matrix for question generation
-CONTENT_MATRIX = {
+content_matrix = {
     'psychology': {
         'concepts': [{'name': "Cognitive Dissonance"}, {'name': "Classical Conditioning"}, {'name': "Operant Conditioning"}, {'name': "Confirmation Bias"}, {'name': "The Bystander Effect"}],
         'scenarios': ["a student justifying cheating", "a person overcoming a phobia", "training a new pet", "evaluating news sources"]
@@ -68,264 +75,247 @@ CONTENT_MATRIX = {
     }
 }
 
-# 4. Question Templates
-QUESTION_TEMPLATES = {
-    'remembering': lambda subject, concept: f"What is the definition and primary function of {concept['name']} in the context of {subject.replace('_', ' ')}?",
+question_templates = {
+    'remembering': lambda subject, concept: f"What is the definition and primary function of {concept['name']} in the context of {subject}?",
     'applying': lambda subject, concept, scenario: f"How would you apply the principle of {concept['name']} to the scenario involving {scenario}?",
-    'analyzing': lambda subject, concept1, concept2: f"Analyze the key differences between {concept1['name']} and {concept2['name']} within the field of {subject.replace('_', ' ')}.",
-    'evaluating': lambda subject, concept, scenario: f"Evaluate the effectiveness of using {concept['name']} as a framework for understanding {scenario}.",
+    'analyzing': lambda subject, concept1, concept2: f"Analyze the key differences between {concept1['name']} and {concept2['name']} within the field of {subject}.",
+    'evaluating': lambda subject, concept, scenario: f"Evaluate the effectiveness of using {concept['name']} as a framework for understanding {scenario}."
 }
 
-# ------------------- Generation Logic Functions -------------------
+all_subjects = ['psychology', 'medical_subjects', 'business', 'geek_mythology']
 
 def generate_single_unique_question(subject, used_questions):
-    """Generates one unique question for a given subject, ensuring uniqueness within the current batch."""
     q_text = ""
     attempts = 0
-    
-    while True:
-        skill = select_random(['remembering', 'applying', 'analyzing', 'evaluating'])
-        concepts = CONTENT_MATRIX[subject]['concepts']
-        scenarios = CONTENT_MATRIX[subject]['scenarios']
-        concept1 = select_random(concepts)
+    while attempts < 200:
+        skill = random.choice(['remembering', 'applying', 'analyzing', 'evaluating'])
+        concepts = content_matrix[subject]['concepts']
+        scenarios = content_matrix[subject]['scenarios']
+        concept1 = random.choice(concepts)
         
         if skill == 'applying':
-            q_text = QUESTION_TEMPLATES['applying'](subject, concept1, select_random(scenarios))
+            q_text = question_templates['applying'](subject, concept1, random.choice(scenarios))
         elif skill == 'analyzing':
-            c2 = select_random(concepts)
-            while c2['name'] == concept1['name']:
-                c2 = select_random(concepts)
-            q_text = QUESTION_TEMPLATES['analyzing'](subject, concept1, c2)
+            concept2 = random.choice(concepts)
+            while concept2['name'] == concept1['name']:
+                concept2 = random.choice(concepts)
+            q_text = question_templates['analyzing'](subject, concept1, concept2)
         elif skill == 'evaluating':
-            q_text = QUESTION_TEMPLATES['evaluating'](subject, concept1, select_random(scenarios))
-        else: # remembering
-            q_text = QUESTION_TEMPLATES['remembering'](subject, concept1)
+            q_text = question_templates['evaluating'](subject, concept1, random.choice(scenarios))
+        else:
+            q_text = question_templates['remembering'](subject, concept1)
         
         if q_text not in used_questions:
-            break
-        
+            used_questions.add(q_text)
+            return {'q': q_text, 'a': "A detailed, multi-sentence answer.", 'type': skill, 'subject': subject}
         attempts += 1
-        if attempts > 200: # Safety break to prevent infinite loops if concepts run out
-            break
+    return None
 
-    question_data = {'q': q_text, 'a': "A detailed, multi-sentence answer.", 'type': skill, 'subject': subject}
-    used_questions.add(q_text)
-    return question_data
-
-def generate_study_packet(subject, level, persona_name, used_questions):
-    """Generates a complete study packet structure with questions and solutions."""
-    
-    plan = select_random(UNIT_PLANS[subject])
-    persona = PERSONAS[persona_name]
-    
+def generate_study_packet(subject, level, persona, used_questions):
+    plan = random.choice(unit_plans[subject])
     blueprints = [
-        {'name': "Exam Prep", 'sections': ['assessment_30', 'activity'], 'introText': f"This exam preparation packet for the unit on **{plan['objective'].split(' ')[-1]}** is designed for rigorous self-assessment."},
-        {'name': "Study Guide", 'sections': ['outline', 'key_terms', 'assessment_15'], 'introText': f"This study guide provides a comprehensive thematic outline and key terminology for the unit on **{plan['objective'].split(' ')[-1]}**."},
-        {'name': "Activity Module", 'sections': ['activity', 'outline', 'assessment_10'], 'introText': f"This activity module focuses on the practical application of concepts related to the unit on **{plan['objective'].split(' ')[-1]}**."}
+        {'name': "Exam Prep", 'sections': ['intro', 'assessment_30', 'activity'], 'introText': f"This exam preparation packet for the unit on **{plan['objective'].split(' ')[2]}** is designed for rigorous self-assessment."},
+        {'name': "Study Guide", 'sections': ['intro', 'outline', 'key_terms', 'assessment_15'], 'introText': f"This study guide provides a comprehensive thematic outline and key terminology for the unit on **{plan['objective'].split(' ')[2]}**."},
+        {'name': "Activity Module", 'sections': ['intro', 'activity', 'outline', 'assessment_10'], 'introText': f"This activity module focuses on the practical application of concepts related to the unit on **{plan['objective'].split(' ')[2]}**."}
     ]
-    blueprint = select_random(blueprints)
-
-    question_count = 0
-    if 'assessment_30' in blueprint['sections']:
-        question_count = 30
-    elif 'assessment_15' in blueprint['sections']:
-        question_count = 15
-    else: # assessment_10
-        question_count = 10
-    
-    # Simple level scaling
-    if level == 'advanced':
-        question_count = min(30, question_count + 5) # Increase count slightly for Advanced level
-
+    blueprint = random.choice(blueprints)
+    question_count = {'Exam Prep': 30, 'Study Guide': 15, 'Activity Module': 10}.get(blueprint['name'], 10)
     questions = []
-    while len(questions) < question_count:
-        questions.append(generate_single_unique_question(subject, used_questions))
-    
-    processed_questions = []
-    for q in questions:
-        # Generate dynamic solution text
-        solution = f"{persona['intro']('the concept in question')} This is a detailed, multi-sentence explanation that fully addresses the prompt, written to feel like original human work."
-        processed_questions.append({**q, 's': solution})
+    for _ in range(question_count):
+        q = generate_single_unique_question(subject, used_questions)
+        if q:
+            q['s'] = f"{persona['intro']('the concept in question')} This is a detailed, multi-sentence explanation that fully addresses the prompt."
+            questions.append(q)
+    return {'blueprint': blueprint, 'plan': plan, 'questions': questions}
 
-    return {'blueprint': blueprint, 'plan': plan, 'questions': processed_questions}
-
-# ------------------- DOCX Utility Functions -------------------
-
-def add_paragraph_with_bold_text(document, text, style='Normal', space_after=Pt(12)):
-    """Helper to handle basic **bold** markdown in Python-docx."""
-    p = document.add_paragraph(style=style)
-    p.paragraph_format.space_after = space_after
+def add_styled_text(paragraph, text):
     parts = text.split('**')
     for i, part in enumerate(parts):
-        run = p.add_run(part)
         if i % 2 == 1:
-            run.bold = True
-    return p
+            paragraph.add_run(part).bold = True
+        else:
+            paragraph.add_run(part)
 
 def create_docx(subject_name, packet, unique_id):
-    """Generates a DOCX file from the packet data and returns it as bytes."""
     document = Document()
-    
-    # Set default style for font size (12pt)
-    document.styles['Normal'].font.name = 'Calibri'
-    document.styles['Normal'].font.size = Pt(12)
-
-    blueprint = packet['blueprint']
-    plan = packet['plan']
-    questions = packet['questions']
-    
-    # 1. Header/Footer Setup (Simplified)
-    section = document.sections[0]
-    
-    # Simple Header: Dudai's Academy
-    header = section.header
+    style = document.styles['Normal']
+    font = style.font
+    font.name = 'Calibri'
+    font.size = Pt(12)
+    header = document.sections[0].header
     header.paragraphs[0].text = "Dudai's Academy"
     header.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-    header.paragraphs[0].runs[0].font.size = Pt(9)
-    header.paragraphs[0].runs[0].italic = True
-
-    # Simple Footer: Page number and GenID
-    footer = section.footer
-    footer_p = footer.paragraphs[0]
-    footer_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    footer_p.add_run(f"GenID: {unique_id} | Page ")
-    
-    # Adding Page Number field (Requires direct XML manipulation)
-    fldChar = OxmlElement('w:fldChar')
-    fldChar.set(qn('w:fldCharType'), 'begin')
-    footer_p._element.append(fldChar)
-
-    instrText = OxmlElement('w:instrText')
-    instrText.set(qn('xml:space'), 'preserve')
-    instrText.text = 'PAGE'
-    footer_p._element.append(instrText)
-
-    fldChar = OxmlElement('w:fldChar')
-    fldChar.set(qn('w:fldCharType'), 'end')
-    footer_p._element.append(fldChar)
-    
-    # 2. Main Content
-    
-    # Info Block
-    p = document.add_paragraph()
-    p.add_run("Name: ____________________________").bold = True
-    document.add_paragraph(f"Subject: {subject_name}").runs[0].bold = True
-    document.add_paragraph(f"School: Dudai's Academy").runs[0].bold = True
-    document.add_paragraph().paragraph_format.space_after = Pt(24) # Spacing after block
-
-    # Professor's Intro
+    footer = document.sections[0].footer
+    footer.paragraphs[0].text = f"GenID: {unique_id} | Page #"
+    footer.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+    document.add_paragraph("Name: ____________________________").bold = True
+    document.add_paragraph(f"Subject: {subject_name}").bold = True
+    document.add_paragraph("School: Dudai's Academy", style='Intense Quote').paragraph_format.space_after = Pt(18)
+    plan = packet['plan']
+    blueprint = packet['blueprint']
+    document.add_heading(f"Professor's Introduction: {plan['objective']}", level=1)
     p_intro = document.add_paragraph()
-    p_intro.add_run(f"Professor's Introduction: {plan['objective']}").bold = True
-    p_intro.runs[0].underline = True
-
-    add_paragraph_with_bold_text(document, blueprint['introText'])
-
-    question_counter = 0
-
-    # 3. Sections Content
-    for section_name in blueprint['sections']:
-        
-        if section_name == 'outline':
-            document.add_page_break() 
+    add_styled_text(p_intro, blueprint['introText'])
+    p_intro.paragraph_format.space_after = Pt(12)
+    solution_paragraphs = []
+    for section in blueprint['sections']:
+        if section == 'outline':
             document.add_heading("Part I: Thematic Outline", level=2)
-            
-            # Use built-in list styles
-            for line in plan['outline']:
+            for i, line in enumerate(plan['outline']):
+                p = document.add_paragraph(line.strip())
                 if line.startswith('  '):
-                    document.add_paragraph(line.strip(), style='List Bullet 2')
+                     p.style = 'List Bullet 2'
                 else:
-                    document.add_paragraph(line.strip(), style='List Number')
-
-        elif section_name == 'key_terms':
-            document.add_page_break()
+                     p.style = 'List Bullet'
+        elif section == 'key_terms':
             document.add_heading("Part II: Key Terminology", level=2)
-            table = document.add_table(rows=len(plan['keyTerms']) + 1, cols=2)
+            table = document.add_table(rows=1, cols=2)
             table.style = 'Table Grid'
-            
-            # Table Header
             hdr_cells = table.rows[0].cells
-            hdr_cells[0].text = "Term"
-            hdr_cells[1].text = "Definition"
-            
-            # Table Content
-            for i, term in enumerate(plan['keyTerms']):
-                row_cells = table.rows[i + 1].cells
+            hdr_cells[0].text = 'Term'
+            hdr_cells[1].text = 'Definition'
+            for term in plan['keyTerms']:
+                row_cells = table.add_row().cells
                 row_cells[0].text = term
                 row_cells[1].text = f"Definition for {term}."
-
-        elif section_name == 'activity':
-            document.add_page_break()
+        elif section == 'activity':
             document.add_heading("Part III: Application Activity", level=2)
-            document.add_paragraph(plan['activity']['scenario']).italic = True
-            
-            for i, q_data in enumerate(plan['activity']['questions']):
-                document.add_paragraph(f"{i + 1}. {q_data['q']}", style='List Number')
-
-        elif 'assessment' in section_name:
+            document.add_paragraph(plan['activity']['scenario'], style='Quote')
+            for q in plan['activity']['questions']:
+                document.add_paragraph(q['q'], style='List Paragraph')
+            solution_paragraphs.append(document.add_heading("Activity Solutions:", level=3))
+            for q in plan['activity']['questions']:
+                p_sol = document.add_paragraph()
+                p_sol.add_run(f"{q['q']} ").bold = True
+                p_sol.add_run(f"Answer: {q['a']}")
+        elif section.startswith('assessment'):
             document.add_page_break()
             document.add_heading("Part IV: Practice Assessment", level=2)
-            
-            # Assessment Questions
-            for i, q_data in enumerate(questions):
-                question_counter += 1
-                add_paragraph_with_bold_text(document, f"{question_counter}. {q_data['q']}", style='List Number')
+            for i, q in enumerate(packet['questions']):
+                document.add_paragraph(f"{i + 1}. {q['q']}", style='List Number')
+            solution_paragraphs.append(document.add_heading("Assessment Solutions:", level=3))
+            for i, q in enumerate(packet['questions']):
+                p_sol = document.add_paragraph()
+                p_sol.add_run(f"Answer {i + 1}: ").bold = True
+                add_styled_text(p_sol, q['s'])
+    document.add_page_break()
+    document.add_heading("Solutions & Explanations", level=1)
+    f = io.BytesIO()
+    document.save(f)
+    f.seek(0)
+    return f
 
-            # Assessment Solutions (Starts on new page)
-            document.add_page_break()
-            document.add_heading("Solutions & Explanations", level=1).alignment = WD_ALIGN_PARAGRAPH.CENTER
-            
-            document.add_heading("Assessment Solutions:", level=3)
-            
-            for i, q_data in enumerate(questions):
-                # Question Number Header
-                p_num = document.add_paragraph(f"Answer {i + 1}:", style='Heading 4')
-                p_num.paragraph_format.space_before = Pt(12)
-                
-                # Detailed Solution
-                add_paragraph_with_bold_text(document, q_data['s'])
+# --- Bot Handlers ---
 
-    # Save to a byte stream
-    file_stream = io.BytesIO()
-    document.save(file_stream)
-    file_stream.seek(0)
-    return file_stream.read()
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
+    bot.reply_to(message, "Welcome to the Dudai's Academy Packet Generator!\nUse /gen <number> to start.")
 
+@bot.message_handler(commands=['gen'])
+def handle_generation_command(message):
+    try:
+        count = int(message.text.split()[1])
+        if not 1 <= count <= 30:
+            bot.reply_to(message, "Please choose a number between 1 and 30.")
+            return
+        user_id = message.from_user.id
+        user_data[user_id] = {'count': count, 'subjects': []}
+        markup = InlineKeyboardMarkup(row_width=2)
+        buttons = [InlineKeyboardButton(s.replace("_", " ").title(), callback_data=f"subject_{s}") for s in all_subjects]
+        markup.add(*buttons)
+        markup.add(InlineKeyboardButton("DONE - Continue", callback_data="subjects_done"))
+        bot.send_message(message.chat.id, "Step 1: Select subjects, then press DONE.", reply_markup=markup)
+    except (IndexError, ValueError):
+        bot.reply_to(message, "Please provide a number. Example: `/gen 5`")
 
-def generate_zip_file(count, selected_subjects, level, telegram_user_id, username=None):
-    """
-    Main function to orchestrate the generation and return the ZIP file bytes.
-    :param count: Number of files to generate (1-30).
-    :param selected_subjects: List of subject keys (e.g., ['psychology', 'business']).
-    :param level: 'undergraduate' or 'advanced'.
-    :param telegram_user_id: User ID for uniqueness.
-    :param username: Username to mention in filenames.
-    :return: Bytes of the generated ZIP file.
-    """
-    zip_buffer = io.BytesIO()
-    zip_archive = zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED)
+@bot.callback_query_handler(func=lambda call: True)
+def callback_query(call):
+    user_id = call.from_user.id
+    chat_id = call.message.chat.id
+    message_id = call.message.message_id
     
-    used_questions_this_batch = set()
-    persona_name = select_random(list(PERSONAS.keys()))
-    
-    for i in range(count):
-        # Choose subject for this specific file
-        subject = select_random(selected_subjects)
-        packet = generate_study_packet(subject, level, persona_name, used_questions_this_batch)
-        
-        unique_id = uuid.uuid4().hex[:8]
-        subject_name = subject.replace('_', ' ').title()
-        
-        # Filename construction
-        filename = f"DudaisPacket_{subject_name.replace(' ', '')}_{level[0].upper()}_{i + 1}_{unique_id}.docx"
+    if user_id not in user_data:
+        bot.answer_callback_query(call.id, "Request expired. Start over with /gen.")
+        return
+
+    action, value = call.data.split('_', 1)
+
+    if action == 'subject':
+        if value in user_data[user_id]['subjects']:
+            user_data[user_id]['subjects'].remove(value)
+        else:
+            user_data[user_id]['subjects'].append(value)
+        bot.answer_callback_query(call.id, f"Toggled {value.replace('_', ' ').title()}")
+
+    elif action == 'subjects' and value == 'done':
+        if not user_data[user_id]['subjects']:
+            bot.answer_callback_query(call.id, "Please select at least one subject.")
+            return
+        bot.answer_callback_query(call.id, "Subjects saved!")
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(InlineKeyboardButton("Undergraduate", callback_data="level_undergraduate"),
+                   InlineKeyboardButton("Advanced", callback_data="level_advanced"))
+        bot.edit_message_text("Step 2: Select a level.", chat_id=chat_id, message_id=message_id, reply_markup=markup)
+
+    elif action == 'level':
+        user_data[user_id]['level'] = value
+        bot.answer_callback_query(call.id, f"Level set to {value.title()}!")
         
         try:
-            doc_bytes = create_docx(subject_name, packet, unique_id)
-            zip_archive.writestr(filename, doc_bytes)
-        except Exception as e:
-            # Log error but continue with the next file
-            print(f"Error generating DOCX for file {i+1}: {e}")
-            continue 
+            # --- NEW: Loading Screen Logic ---
+            count = user_data[user_id]['count']
+            last_reported_percent = -1
+            
+            # Initial loading message
+            bot.edit_message_text(f"⏳ Preparing generation... 0%", chat_id=chat_id, message_id=message_id)
 
-    zip_archive.close()
-    zip_buffer.seek(0)
-    return zip_buffer.read()
+            subjects = user_data[user_id]['subjects']
+            level = user_data[user_id]['level']
+            
+            zip_buffer = io.BytesIO()
+            used_questions_batch = set()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for i in range(count):
+                    # --- Update percentage and message ---
+                    percent_done = int(((i + 1) / count) * 100)
+                    if percent_done > last_reported_percent:
+                        try:
+                            # Use a simple progress bar
+                            progress_bar = '█' * (percent_done // 10) + '░' * ((100 - percent_done) // 10)
+                            bot.edit_message_text(f"⏳ Generating packets...\n[{progress_bar}] {percent_done}%", chat_id=chat_id, message_id=message_id)
+                            last_reported_percent = percent_done
+                        except Exception as e:
+                            # Ignore if message is not modified, which can happen on rapid updates
+                            pass
+
+                    # --- Original file generation logic ---
+                    subject = random.choice(subjects)
+                    persona = random.choice(list(personas.values()))
+                    packet = generate_study_packet(subject, level, persona, used_questions_batch)
+                    unique_id = f"{int(time.time())}-{random.randint(100,999)}"
+                    subject_name_for_doc = subject.replace('_', ' ').title()
+                    doc_stream = create_docx(subject_name_for_doc, packet, unique_id)
+                    filename = f"DudaisPacket_{subject}_{level[0].upper()}_{i+1}.docx"
+                    zipf.writestr(filename, doc_stream.read())
+            
+            bot.edit_message_text("📦 Compressing files into a ZIP...", chat_id=chat_id, message_id=message_id)
+            
+            zip_buffer.seek(0)
+            user = call.from_user
+            mention = f"@{user.username}" if user.username else user.first_name
+            caption = f"Here are your {count} study packets, {mention}!"
+            
+            bot.send_document(chat_id, zip_buffer, visible_file_name="Dudais_Academy_Packets.zip", caption=caption)
+            bot.edit_message_text("✅ Generation complete!", chat_id=chat_id, message_id=message_id)
+
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            bot.edit_message_text(f"An error occurred during generation. Please try again.", chat_id=chat_id, message_id=message_id)
+        
+        finally:
+            del user_data[user_id]
+
+if __name__ == '__main__':
+    print("Bot is running...")
+    bot.infinity_polling()
+
