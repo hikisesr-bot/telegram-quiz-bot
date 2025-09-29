@@ -1,2 +1,5 @@
-pyTelegramBotAPI
-python-docx
+pip install -r requirements.txt
+
+**Recommendation:** I strongly suggest you create the `requirements.txt` file and include it in your GitHub repository alongside your two `.py` files. This ensures your dependencies are tracked properly for any deployment platform.
+
+Do you want me to generate the `requirements.txt` file for you now?
